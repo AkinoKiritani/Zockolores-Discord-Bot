@@ -1,4 +1,7 @@
 ﻿using DSharpPlus;
+using DSharpPlus.CommandsNext;
+using DSharpPlus.CommandsNext.Exceptions;
+using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using Newtonsoft.Json;
 using System;
@@ -10,7 +13,8 @@ namespace Zockolores
     internal class Program
     {
         private DiscordClient Bot { get; set; }
-        private ConfigJson _cfgjson;
+        private ConfigJson Cfgjson { get; set; }
+        private CommandsNextModule Commands { get; set; }
 
         private static void Main(string[] args)
         {
@@ -22,11 +26,11 @@ namespace Zockolores
         {
             var sr = new StreamReader(File.OpenRead("config.json"));
             var json = await sr.ReadToEndAsync();
-            _cfgjson = JsonConvert.DeserializeObject<ConfigJson>(json);
+            Cfgjson = JsonConvert.DeserializeObject<ConfigJson>(json);
 
             Bot = new DiscordClient(new DiscordConfiguration
             {
-                Token = _cfgjson.Token,
+                Token = Cfgjson.Token,
                 TokenType = TokenType.Bot,
 
                 AutoReconnect = true,
@@ -39,18 +43,43 @@ namespace Zockolores
             });
 
             Bot.ClientErrored += Bot_ClientError;
-            Bot.MessageCreated += Bot_MessageCreated;
+
+            var ccfg = new CommandsNextConfiguration
+            {
+                StringPrefix = Cfgjson.CommandPrefix,
+                EnableMentionPrefix = true
+            };
+            Commands = Bot.UseCommandsNext(ccfg);
+
+            Commands.CommandExecuted += Commands_CommandExecuted;
+            Commands.CommandErrored += Commands_CommandErrored;
+
+            Commands.RegisterCommands<Commands>();
 
             await Bot.ConnectAsync();
             await Task.Delay(-1);
         }
 
-        private Task Bot_MessageCreated(MessageCreateEventArgs e)
+        private async Task Commands_CommandErrored(CommandErrorEventArgs e)
         {
-            if (e.Message.Content.StartsWith(_cfgjson.CommandPrefix + "ping"))
+            e.Context.Client.DebugLogger.LogMessage(LogLevel.Error, "Zokolores Bot", $"{e.Context.User.Username} tried executing '{e.Command?.QualifiedName ?? "<unknown command>"}' but it errored: {e.Exception.GetType()}: {e.Exception.Message ?? "<no message>"}", DateTime.Now);
+
+            if (e.Exception is ChecksFailedException ex)
             {
-                e.Message.RespondAsync("pong!");
+                var emoji = DiscordEmoji.FromName(e.Context.Client, ":no_entry:");
+                var embed = new DiscordEmbedBuilder
+                {
+                    Title = "Access denied",
+                    Description = $"{emoji} You do not have the permissions required to execute this command.",
+                    Color = new DiscordColor(0xFF0000)
+                };
+                await e.Context.RespondAsync("", embed: embed);
             }
+        }
+
+        private Task Commands_CommandExecuted(CommandExecutionEventArgs e)
+        {
+            e.Context.Client.DebugLogger.LogMessage(LogLevel.Info, "Zockolores Bot", $"{e.Context.User.Username} successfully executed '{e.Command.QualifiedName}'", DateTime.Now);
             return Task.CompletedTask;
         }
 
